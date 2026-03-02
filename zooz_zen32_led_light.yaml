@@ -1,0 +1,147 @@
+blueprint:
+  name: "Zooz ZEN32 LED Indicator as Light"
+  description: >
+    Exposes a single LED indicator on a Zooz ZEN32 Scene Controller as a
+    standard Home Assistant `light` entity with color and brightness support.
+    Designed for automation-driven signaling.
+
+    Supports all 7 ZEN32 colors: white, blue, green, red, magenta, yellow, cyan.
+
+    One instance per LED. For a full ZEN32, create up to 5 instances
+    (relay button + buttons 1-4).
+
+    **One-time device setup** (run once per physical ZEN32, persists in device
+    flash): Set parameter 23 to 1 (disable LED flash on setting change) and
+    parameter 27 to 1 (disable LED flash on button press).
+
+  domain: template
+  source_url: https://github.com/npnicholson/ha-blueprints/blob/main/blueprints/template/zooz_zen32_led_light.yaml
+
+  input:
+    device_id:
+      name: ZEN32 Device
+      description: The Zooz ZEN32 Scene Controller containing the LED to control.
+      selector:
+        device:
+          integration: zwave_js
+
+    led_position:
+      name: LED Position
+      description: Which button's LED this instance controls.
+      selector:
+        select:
+          options:
+            - label: "Relay Button LED"
+              value: "relay"
+            - label: "Button 1 LED"
+              value: "btn1"
+            - label: "Button 2 LED"
+              value: "btn2"
+            - label: "Button 3 LED"
+              value: "btn3"
+            - label: "Button 4 LED"
+              value: "btn4"
+
+    entity_name:
+      name: Light Entity Name
+      description: >
+        Friendly name for the created light entity.
+        e.g. "Kitchen ZEN32 Button 1 LED"
+      selector:
+        text:
+
+# ---------------------------------------------------------------------------
+# Variables
+# ---------------------------------------------------------------------------
+variables:
+  _device_id: !input device_id
+  _led_position: !input led_position
+
+  _params:
+    relay: {mode: "1",  color: "6",  brightness: "11"}
+    btn1:  {mode: "2",  color: "7",  brightness: "12"}
+    btn2:  {mode: "3",  color: "8",  brightness: "13"}
+    btn3:  {mode: "4",  color: "9",  brightness: "14"}
+    btn4:  {mode: "5",  color: "10", brightness: "15"}
+
+  _palette:
+    white:   {r: 255, g: 255, b: 255, value: 0}
+    blue:    {r: 0,   g: 0,   b: 255, value: 1}
+    green:   {r: 0,   g: 255, b: 0,   value: 2}
+    red:     {r: 255, g: 0,   b: 0,   value: 3}
+    magenta: {r: 255, g: 0,   b: 255, value: 4}
+    yellow:  {r: 255, g: 255, b: 0,   value: 5}
+    cyan:    {r: 0,   g: 255, b: 255, value: 6}
+
+# ---------------------------------------------------------------------------
+# Light entity
+# ---------------------------------------------------------------------------
+light:
+  name: !input entity_name
+
+  # Restore last known state from the recorder on HA restart.
+  # If your HA version does not support restore for template lights,
+  # the entity will initialize as off — add a startup automation to
+  # drive LEDs to a known state as a fallback.
+  restore: true
+
+  turn_on:
+    - variables:
+        mode_param:       "{{ _params[_led_position]['mode'] }}"
+        color_param:      "{{ _params[_led_position]['color'] }}"
+        brightness_param: "{{ _params[_led_position]['brightness'] }}"
+
+        in_r: "{{ (rgb_color[0] | int) if rgb_color is defined else 255 }}"
+        in_g: "{{ (rgb_color[1] | int) if rgb_color is defined else 255 }}"
+        in_b: "{{ (rgb_color[2] | int) if rgb_color is defined else 255 }}"
+
+        # Find nearest supported palette color by Euclidean distance in RGB space
+        nearest_color: >
+          {% set ns = namespace(best_name='white', best_dist=999999) %}
+          {% for name, c in _palette.items() %}
+            {% set dist = ((in_r - c.r)**2 + (in_g - c.g)**2 + (in_b - c.b)**2) ** 0.5 %}
+            {% if dist < ns.best_dist %}
+              {% set ns.best_dist = dist %}
+              {% set ns.best_name = name %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.best_name }}
+
+        color_value: "{{ _palette[nearest_color]['value'] }}"
+
+        # Map HA brightness 0–255 → Zooz 0=100%, 1=60%, 2=30%
+        in_brightness: >
+          {{ (brightness | int) if brightness is defined else 153 }}
+
+        zooz_brightness: >
+          {% if in_brightness > 170 %}0
+          {% elif in_brightness > 85 %}1
+          {% else %}2{% endif %}
+
+    - action: zwave_js.set_config_parameter
+      data:
+        device_id: "{{ _device_id }}"
+        parameter: "{{ mode_param }}"
+        value: "3"
+
+    - action: zwave_js.set_config_parameter
+      data:
+        device_id: "{{ _device_id }}"
+        parameter: "{{ color_param }}"
+        value: "{{ color_value }}"
+
+    - action: zwave_js.set_config_parameter
+      data:
+        device_id: "{{ _device_id }}"
+        parameter: "{{ brightness_param }}"
+        value: "{{ zooz_brightness }}"
+
+  turn_off:
+    - variables:
+        mode_param: "{{ _params[_led_position]['mode'] }}"
+
+    - action: zwave_js.set_config_parameter
+      data:
+        device_id: "{{ _device_id }}"
+        parameter: "{{ mode_param }}"
+        value: "2"
