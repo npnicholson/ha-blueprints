@@ -8,7 +8,14 @@ blueprint:
     Supports all 7 ZEN32 colors: white, blue, green, red, magenta, yellow, cyan.
 
     One instance per LED. For a full ZEN32, create up to 5 instances
-    (relay button + buttons 1-4).
+    (relay button + buttons 1–4).
+
+    State is read directly from the Z-Wave JS config parameter entities that
+    HA creates automatically for the device — no helper entities required.
+
+    To find the parameter entities, go to the device page in HA and look for
+    number or select entities named something like "LED indicator color" and
+    "LED indicator brightness" for the relevant button.
 
     **One-time device setup** (run once per physical ZEN32, persists in device
     flash): Set parameter 23 to 1 (disable LED flash on setting change) and
@@ -50,12 +57,43 @@ blueprint:
       selector:
         text:
 
+    mode_entity:
+      name: LED Mode Entity
+      description: >
+        The Z-Wave JS entity for this LED's mode parameter. Find it on the
+        device page — named something like "LED indicator mode (button 1)".
+      selector:
+        entity:
+          integration: zwave_js
+
+    color_entity:
+      name: LED Color Entity
+      description: >
+        The Z-Wave JS entity for this LED's color parameter. Find it on the
+        device page — named something like "LED indicator color (button 1)".
+      selector:
+        entity:
+          integration: zwave_js
+
+    brightness_entity:
+      name: LED Brightness Entity
+      description: >
+        The Z-Wave JS entity for this LED's brightness parameter. Find it on
+        the device page — named something like "LED indicator brightness
+        (button 1)".
+      selector:
+        entity:
+          integration: zwave_js
+
 # ---------------------------------------------------------------------------
 # Variables
 # ---------------------------------------------------------------------------
 variables:
   _device_id: !input device_id
   _led_position: !input led_position
+  _mode_entity: !input mode_entity
+  _color_entity: !input color_entity
+  _brightness_entity: !input brightness_entity
 
   _params:
     relay: {mode: "1",  color: "6",  brightness: "11"}
@@ -73,11 +111,39 @@ variables:
     yellow:  {r: 255, g: 255, b: 0,   value: 5}
     cyan:    {r: 0,   g: 255, b: 255, value: 6}
 
+  _color_to_hs:
+    0: [0, 0]
+    1: [240, 100]
+    2: [120, 100]
+    3: [0, 100]
+    4: [300, 100]
+    5: [60, 100]
+    6: [180, 100]
+
+  _brightness_to_ha:
+    0: 255
+    1: 153
+    2: 77
+
 # ---------------------------------------------------------------------------
 # Light entity
 # ---------------------------------------------------------------------------
 light:
   name: !input entity_name
+
+  supported_color_modes:
+    - "hs"
+  color_mode: "hs"
+
+  state: "{{ states(_mode_entity) | int(2) != 2 }}"
+
+  hs_color: >
+    {% set cv = states(_color_entity) | int(0) %}
+    {{ _color_to_hs.get(cv, [0, 0]) }}
+
+  brightness: >
+    {% set bv = states(_brightness_entity) | int(1) %}
+    {{ _brightness_to_ha.get(bv, 153) }}
 
   turn_on:
     - variables:
@@ -89,7 +155,6 @@ light:
         in_g: "{{ (rgb_color[1] | int) if rgb_color is defined else 255 }}"
         in_b: "{{ (rgb_color[2] | int) if rgb_color is defined else 255 }}"
 
-        # Find nearest supported palette color by Euclidean distance in RGB space
         nearest_color: >
           {% set ns = namespace(best_name='white', best_dist=999999) %}
           {% for name, c in _palette.items() %}
@@ -103,7 +168,6 @@ light:
 
         color_value: "{{ _palette[nearest_color]['value'] }}"
 
-        # Map HA brightness 0–255 → Zooz 0=100%, 1=60%, 2=30%
         in_brightness: >
           {{ (brightness | int) if brightness is defined else 153 }}
 

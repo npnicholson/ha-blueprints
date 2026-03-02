@@ -7,6 +7,13 @@ blueprint:
 
     Supports 4 colors: white, blue, green, red.
 
+    State is read directly from the Z-Wave JS config parameter entities that
+    HA creates automatically for the device — no helper entities required.
+
+    To find the parameter entities, go to the device page in HA and look for
+    number or select entities named something like "LED indicator color" and
+    "LED indicator brightness".
+
     **One-time device setup** (run once per physical device, persists in device
     flash): Disable LED flash on setting changes so automations don't cause
     flicker. ZEN71/ZEN75: set parameter 19 to 1. ZEN72/ZEN77: confirm the
@@ -45,12 +52,44 @@ blueprint:
       selector:
         text:
 
+    mode_entity:
+      name: LED Mode Entity
+      description: >
+        The Z-Wave JS number/select entity for the LED mode parameter.
+        Controls on/off behavior. Find it on the device page — it will be
+        named something like "LED indicator mode" or "LED indicator".
+      selector:
+        entity:
+          integration: zwave_js
+
+    color_entity:
+      name: LED Color Entity
+      description: >
+        The Z-Wave JS number/select entity for the LED color parameter.
+        Find it on the device page — named something like "LED indicator color".
+      selector:
+        entity:
+          integration: zwave_js
+
+    brightness_entity:
+      name: LED Brightness Entity
+      description: >
+        The Z-Wave JS number/select entity for the LED brightness parameter.
+        Find it on the device page — named something like "LED indicator
+        brightness".
+      selector:
+        entity:
+          integration: zwave_js
+
 # ---------------------------------------------------------------------------
 # Variables
 # ---------------------------------------------------------------------------
 variables:
   _device_id: !input device_id
   _model: !input model
+  _mode_entity: !input mode_entity
+  _color_entity: !input color_entity
+  _brightness_entity: !input brightness_entity
 
   _params:
     zen71: {mode: "2", color: "14", brightness: "15"}
@@ -60,16 +99,49 @@ variables:
 
   # 4-color palette only — ZEN7x devices do not support magenta/yellow/cyan
   _palette:
-    white: {r: 255, g: 255, b: 255, value: 0}
-    blue:  {r: 0,   g: 0,   b: 255, value: 1}
-    green: {r: 0,   g: 255, b: 0,   value: 2}
-    red:   {r: 255, g: 0,   b: 0,   value: 3}
+    white: {r: 255, g: 255, b: 255, value: 0, hs: [0, 0]}
+    blue:  {r: 0,   g: 0,   b: 255, value: 1, hs: [240, 100]}
+    green: {r: 0,   g: 255, b: 0,   value: 2, hs: [120, 100]}
+    red:   {r: 255, g: 0,   b: 0,   value: 3, hs: [0, 100]}
+
+  # Reverse map: device color integer → hs_color for state reporting
+  _color_to_hs:
+    0: [0, 0]
+    1: [240, 100]
+    2: [120, 100]
+    3: [0, 100]
+
+  # Reverse map: device brightness integer → HA brightness (0-255)
+  _brightness_to_ha:
+    0: 255
+    1: 153
+    2: 77
 
 # ---------------------------------------------------------------------------
 # Light entity
 # ---------------------------------------------------------------------------
 light:
   name: !input entity_name
+
+  supported_color_modes:
+    - "hs"
+  color_mode: "hs"
+
+  # Read on/off state from the mode parameter entity.
+  # Values 0 and 1 are behavior-tracking modes (on when relay on/off).
+  # Value 2 = always off, value 3 = always on.
+  # We treat 2 as off, everything else as on.
+  state: "{{ states(_mode_entity) | int(2) != 2 }}"
+
+  # Read color from the color parameter entity
+  hs_color: >
+    {% set cv = states(_color_entity) | int(0) %}
+    {{ _color_to_hs.get(cv, [0, 0]) }}
+
+  # Read brightness from the brightness parameter entity
+  brightness: >
+    {% set bv = states(_brightness_entity) | int(1) %}
+    {{ _brightness_to_ha.get(bv, 153) }}
 
   turn_on:
     - variables:
