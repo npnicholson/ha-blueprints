@@ -71,12 +71,6 @@ variables:
 light:
   name: !input entity_name
 
-  # Restore last known state from the recorder on HA restart.
-  # If your HA version does not support restore for template lights,
-  # the entity will initialize as off — add a startup automation to
-  # drive LEDs to a known state as a fallback.
-  restore: true
-
   turn_on:
     - variables:
         mode_param:       "{{ _params[_model]['mode'] }}"
